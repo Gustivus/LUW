@@ -760,7 +760,6 @@ def show_documentation():
         }
         
         df = pd.DataFrame(score_guide)
-
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 def show_quick_start_guide():
@@ -1019,6 +1018,249 @@ def display_results():
         mime="text/csv",
         use_container_width=True
     )
+    
+    # Interactive Candidate Selection
+    st.header("🎯 Interactive Analysis")
+    
+    # Candidate selection
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        selected_candidates = st.multiselect(
+            "📋 Select candidates to analyze:",
+            options=results_df['ticker'].tolist(),
+            default=results_df['ticker'].tolist()[:3],  # Default to top 3
+            help="Choose which candidates to include in the analysis charts"
+        )
+    
+    with col2:
+        st.markdown("**Quick Select:**")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("🔝 Top 3", use_container_width=True):
+                st.session_state.selected_candidates = results_df['ticker'].tolist()[:3]
+                st.rerun()
+        with col_b:
+            if st.button("📊 All", use_container_width=True):
+                st.session_state.selected_candidates = results_df['ticker'].tolist()
+                st.rerun()
+    
+    # Update selection from quick select buttons
+    if 'selected_candidates' in st.session_state:
+        selected_candidates = st.session_state.selected_candidates
+    
+    # Filter data based on selection
+    if selected_candidates:
+        filtered_df = results_df[results_df['ticker'].isin(selected_candidates)]
+        
+        # Selection summary
+        st.info(f"📊 Analyzing {len(selected_candidates)} selected candidates: {', '.join(selected_candidates)}")
+        
+        # Charts section
+        st.header("📈 Dynamic Analysis Charts")
+        
+        # Row 1: Distribution and Scatter
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Score distribution for selected candidates
+            fig = px.histogram(
+                filtered_df, 
+                x='composite_score', 
+                nbins=min(10, len(filtered_df)),
+                title=f"LUW Score Distribution ({len(selected_candidates)} selected)",
+                labels={'composite_score': 'LUW Score', 'count': 'Number of Stocks'},
+                color_discrete_sequence=['#667eea']
+            )
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Score vs Price with candidate labels
+            fig = px.scatter(
+                filtered_df,
+                x='current_price',
+                y='composite_score',
+                text='ticker',
+                title=f"LUW Score vs Price ({len(selected_candidates)} selected)",
+                labels={'current_price': 'Price ($)', 'composite_score': 'LUW Score'},
+                color='composite_score',
+                size='avg_volume_million',
+                color_continuous_scale='viridis'
+            )
+            fig.update_traces(textposition="top center")
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Row 2: Component Analysis
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Component comparison bar chart
+            components = ['range_respect', 'reversal_quality', 'swing_efficiency', 'gap_patterns', 'volume_consistency']
+            component_labels = ['Range Respect', 'Reversal Quality', 'Swing Efficiency', 'Gap Patterns', 'Volume Consistency']
+            
+            # Create data for grouped bar chart
+            chart_data = []
+            for idx, row in filtered_df.iterrows():
+                for comp, label in zip(components, component_labels):
+                    chart_data.append({
+                        'Ticker': row['ticker'],
+                        'Component': label,
+                        'Score': row[comp]
+                    })
+            
+            chart_df = pd.DataFrame(chart_data)
+            
+            fig = px.bar(
+                chart_df,
+                x='Component',
+                y='Score',
+                color='Ticker',
+                title="Component Score Comparison",
+                barmode='group'
+            )
+            fig.update_layout(height=350, xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Volume vs Score relationship
+            fig = px.scatter(
+                filtered_df,
+                x='avg_volume_million',
+                y='composite_score',
+                text='ticker',
+                title="Volume vs LUW Score",
+                labels={'avg_volume_million': 'Average Volume (M)', 'composite_score': 'LUW Score'},
+                color='range_respect',
+                size='current_price',
+                color_continuous_scale='RdYlGn'
+            )
+            fig.update_traces(textposition="top center")
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Row 3: Radar Chart Comparison
+        if len(selected_candidates) <= 5:  # Only show radar for 5 or fewer candidates
+            st.subheader("🕸️ Multi-Candidate Radar Comparison")
+            
+            fig = go.Figure()
+            
+            categories = ['Range Respect', 'Reversal Quality', 'Swing Efficiency', 'Gap Patterns', 'Volume Consistency']
+            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD']
+            
+            for i, (_, candidate) in enumerate(filtered_df.iterrows()):
+                values = [
+                    candidate['range_respect'],
+                    candidate['reversal_quality'],
+                    candidate['swing_efficiency'],
+                    candidate['gap_patterns'],
+                    candidate['volume_consistency']
+                ]
+                
+                fig.add_trace(go.Scatterpolar(
+                    r=values,
+                    theta=categories,
+                    fill='toself',
+                    name=candidate['ticker'],
+                    line_color=colors[i % len(colors)],
+                    fillcolor=colors[i % len(colors)],
+                    opacity=0.6
+                ))
+            
+            fig.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+                title=f"Component Comparison: {', '.join(selected_candidates)}",
+                height=500
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("🔍 Select 5 or fewer candidates to see the radar comparison chart")
+        
+        # Detailed comparison table for selected candidates
+        st.subheader("📋 Selected Candidates - Detailed View")
+        
+        # Create detailed comparison
+        comparison_df = filtered_df[['ticker', 'composite_score', 'current_price', 'avg_volume_million', 
+                                   'range_respect', 'reversal_quality', 'swing_efficiency', 
+                                   'gap_patterns', 'volume_consistency', 'total_weeks']].copy()
+        
+        # Format for better display
+        comparison_df['LUW Score'] = comparison_df['composite_score'].apply(lambda x: f"{x:.3f}")
+        comparison_df['Price'] = comparison_df['current_price'].apply(lambda x: f"${x:.2f}")
+        comparison_df['Volume (M)'] = comparison_df['avg_volume_million'].apply(lambda x: f"{x:.1f}")
+        comparison_df['Range Respect'] = comparison_df['range_respect'].apply(lambda x: f"{x:.3f}")
+        comparison_df['Reversal Quality'] = comparison_df['reversal_quality'].apply(lambda x: f"{x:.3f}")
+        comparison_df['Swing Efficiency'] = comparison_df['swing_efficiency'].apply(lambda x: f"{x:.3f}")
+        comparison_df['Gap Patterns'] = comparison_df['gap_patterns'].apply(lambda x: f"{x:.3f}")
+        comparison_df['Volume Consistency'] = comparison_df['volume_consistency'].apply(lambda x: f"{x:.3f}")
+        
+        # Display formatted table
+        st.dataframe(
+            comparison_df[['ticker', 'LUW Score', 'Price', 'Volume (M)', 'Range Respect', 
+                         'Reversal Quality', 'Swing Efficiency', 'Gap Patterns', 'Volume Consistency']],
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Summary statistics for selected candidates
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            avg_score = filtered_df['composite_score'].mean()
+            st.metric("Average LUW Score", f"{avg_score:.3f}")
+        
+        with col2:
+            best_component = filtered_df[['range_respect', 'reversal_quality', 'swing_efficiency', 
+                                        'gap_patterns', 'volume_consistency']].mean().idxmax()
+            component_names = {
+                'range_respect': 'Range Respect',
+                'reversal_quality': 'Reversal Quality', 
+                'swing_efficiency': 'Swing Efficiency',
+                'gap_patterns': 'Gap Patterns',
+                'volume_consistency': 'Volume Consistency'
+            }
+            st.metric("Strongest Component", component_names[best_component])
+        
+        with col3:
+            avg_volume = filtered_df['avg_volume_million'].mean()
+            st.metric("Average Volume", f"{avg_volume:.1f}M")
+        
+        with col4:
+            price_range = filtered_df['current_price'].max() - filtered_df['current_price'].min()
+            st.metric("Price Range", f"${price_range:.2f}")
+        
+        # Trading recommendations based on selection
+        st.subheader("💡 Trading Insights for Selected Candidates")
+        
+        # Generate insights
+        high_range_respect = filtered_df[filtered_df['range_respect'] > 0.6]['ticker'].tolist()
+        high_reversal = filtered_df[filtered_df['reversal_quality'] > 0.6]['ticker'].tolist()
+        high_volume = filtered_df[filtered_df['avg_volume_million'] > 10]['ticker'].tolist()
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if high_range_respect:
+                st.success(f"🎯 **Best for Level Trading:**\n{', '.join(high_range_respect)}")
+            else:
+                st.warning("⚠️ No candidates with strong range respect (>0.6)")
+        
+        with col2:
+            if high_reversal:
+                st.success(f"⚡ **Best for Bounce Plays:**\n{', '.join(high_reversal)}")
+            else:
+                st.warning("⚠️ No candidates with strong reversal quality (>0.6)")
+        
+        with col3:
+            if high_volume:
+                st.success(f"💪 **Best Liquidity:**\n{', '.join(high_volume)}")
+            else:
+                st.info("ℹ️ Consider volume requirements for position sizing")
+                
+    else:
+        st.warning("⚠️ Please select at least one candidate to view analysis charts")
 
 def main():
     """Main Streamlit application"""
