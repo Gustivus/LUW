@@ -245,26 +245,60 @@ class SimpleLUWAnalyzer:
         return successful_reversals / reversal_events if reversal_events > 0 else 0.0
     
     def calculate_swing_efficiency(self, daily_data, monday_ranges):
-        """Calculate swing efficiency between levels"""
-        if monday_ranges.empty:
+        """Calculate swing efficiency between levels with recency weighting"""
+        if monday_ranges.empty or len(daily_data) < 20:
             return 0.0
         
-        # Simplified calculation based on volatility and trend consistency
-        if len(daily_data) < 20:
+        weekly_efficiency_scores = []
+        week_start_dates = []
+        current_date = daily_data.index.max()
+        
+        # Analyze efficiency for each week's Monday range
+        for _, week_range in monday_ranges.iterrows():
+            week_start = week_range['week_start']
+            week_end = week_range['week_end']
+            
+            week_daily = daily_data[
+                (daily_data.index >= week_start) & 
+                (daily_data.index <= week_end)
+            ]
+            
+            if len(week_daily) < 3:
+                continue
+            
+            # Calculate week-specific efficiency metrics
+            week_daily_copy = week_daily.copy()
+            week_daily_copy['daily_range'] = (week_daily_copy['High'] - week_daily_copy['Low']) / week_daily_copy['Close']
+            week_avg_range = week_daily_copy['daily_range'].mean()
+            
+            # Calculate directional consistency within the week
+            week_daily_copy['price_change'] = week_daily_copy['Close'].pct_change()
+            week_price_std = week_daily_copy['price_change'].std()
+            
+            # Measure swings relative to Monday range
+            monday_range_size = week_range['monday_high'] - week_range['monday_low']
+            if monday_range_size > 0:
+                # Calculate how much of Monday range was utilized
+                week_high = week_daily_copy['High'].max()
+                week_low = week_daily_copy['Low'].min()
+                range_utilization = (week_high - week_low) / monday_range_size
+                
+                # Score based on range utilization and consistency
+                trend_consistency = max(0.0, 1.0 - (week_price_std * 10))  # Penalize choppy action
+                range_score = min(week_avg_range * 10, 1.0)  # Reward good daily ranges
+                utilization_score = min(range_utilization, 1.0)  # Reward range utilization
+                
+                # Combine metrics for weekly efficiency score
+                week_efficiency = (range_score * 0.4 + trend_consistency * 0.3 + utilization_score * 0.3)
+                weekly_efficiency_scores.append(max(0.0, min(week_efficiency, 1.0)))
+                week_start_dates.append(week_start)
+        
+        if not weekly_efficiency_scores:
             return 0.0
         
-        # Calculate average daily range
-        daily_data = daily_data.copy()
-        daily_data['daily_range'] = (daily_data['High'] - daily_data['Low']) / daily_data['Close']
-        avg_range = daily_data['daily_range'].mean()
-        
-        # Calculate trend consistency
-        daily_data['price_change'] = daily_data['Close'].pct_change()
-        trend_consistency = 1.0 - abs(daily_data['price_change'].std())
-        
-        # Combine metrics
-        efficiency = min(avg_range * 10, 1.0) * max(trend_consistency, 0.0)
-        return max(0.0, min(efficiency, 1.0))
+        # Apply recency weighting
+        weeks_ago = self.get_weeks_ago(week_start_dates, current_date)
+        return self.apply_recency_weights(weekly_efficiency_scores, weeks_ago)
     
     def calculate_gap_patterns(self, daily_data):
         """Calculate gap pattern success rate"""
